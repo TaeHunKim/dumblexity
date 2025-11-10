@@ -2,7 +2,7 @@
 
 * Docker: https://hub.docker.com/repository/docker/rapaellk/dumblexity-app/general
 
-* TODO: Inline citation
+* TODO: Inline citation, copy to clipboard as markdown, running icon around chatbox
 
 * How to install:
 
