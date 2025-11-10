@@ -1,6 +1,6 @@
 # Dumblexity - simple version of pseudo-Perplexity using Gemini + Streamlit
 
-* Docker: https://hub.docker.com/repository/docker/rapaellk/dumblexity-app/general
+* Docker: https://hub.docker.com/repository/docker/rapaellk/dumblexity/general
 
 * TODO: Inline citation, copy to clipboard as markdown, running icon around chatbox
 
@@ -13,7 +13,7 @@ docker run -d \
   -e GEMINI_API_KEY="여기에_실제_API_KEY를_입력하세요" \
   -v $(pwd)/sessions:/app/sessions \
   --restart unless-stopped \
-  dumblexity-app
+  dumblexity
 ```
 
 * docker-compose.yaml (use with `docker-compose up -d`)
@@ -22,7 +22,7 @@ docker run -d \
 version: '3.8'
 services:
   dumblexity:
-    image: rapaellk/dumblexity-app:latest
+    image: rapaellk/dumblexity:latest
     container_name: my-ai-assistant
     ports:
       - "8501:8501"
