@@ -2,7 +2,7 @@
 
 * Docker: https://hub.docker.com/repository/docker/rapaellk/dumblexity/general
 
-* TODO: Inline citation, copy to clipboard as markdown, running icon around chatbox, multimodal and other grounds (map, file, ...)
+* TODO: Inline citation, multimodal and other grounds (map, file, ...)
 
 * How to install:
 
