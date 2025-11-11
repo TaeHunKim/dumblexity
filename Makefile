@@ -6,7 +6,7 @@ DOCKER_USER ?= rapaellk
 # 이미지 이름
 IMAGE_NAME ?= dumblexity
 # 버전 태그 (릴리스할 때마다 변경)
-VERSION ?= 0.0.6
+VERSION ?= 0.0.8
 
 # 전체 이미지 이름 조합 (예: rapaellk/dumblexity)
 FULL_IMAGE_NAME := $(DOCKER_USER)/$(IMAGE_NAME)
@@ -24,6 +24,9 @@ help: ## 사용 가능한 명령어 목록을 표시합니다.
 	@echo ""
 	@echo "Targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+run:
+	streamlit run ./dumblexity.py
 
 build: ## 로컬에서 Docker 이미지를 빌드합니다.
 	@echo "🐳 Building docker image: $(IMAGE_NAME)..."
@@ -43,7 +46,7 @@ push: tag ## 태그된 이미지를 Docker Hub에 푸시합니다. (로그인 �
 release: push ## [원스톱] 빌드 -> 태그 -> 푸시 과정을 한 번에 수행합니다.
 	@echo "🎉 Release $(VERSION) completed successfully!"
 
-run: stop ## 로컬에서 컨테이너를 실행합니다. (GOOGLE_API_KEY 환경변수 필요)
+docker-run: stop ## 로컬에서 컨테이너를 실행합니다. (GOOGLE_API_KEY 환경변수 필요)
 	@echo "▶️ Running container locally..."
 	@mkdir -p $(PWD)/sessions
 	docker run -d --name $(CONTAINER_NAME) \

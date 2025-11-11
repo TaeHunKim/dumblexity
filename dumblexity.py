@@ -1,110 +1,39 @@
 import streamlit as st
-from google import genai
-from google.genai import types
 import traceback
-import os
-import json
-import glob
 import asyncio
-import httpx
 from st_copy import copy_button
+from streamlit_markdown import st_markdown
+import re
+
+from utils import (
+    resolve_all_urls_async,
+    save_session,
+    load_session,
+    delete_session,
+    get_all_sessions
+)
+
+from ai import (
+    genai_stream_wrapper,
+    generate_config,
+    get_genai_client,
+    gen_sdk_history,
+    available_models,
+    get_function_call_results
+)
 
 # --- Constants & Setup ---
-SESSION_DIR = "sessions"
-os.makedirs(SESSION_DIR, exist_ok=True)
-
 st.set_page_config(page_title="Dumblexity", page_icon="🤖", layout="wide")
+
+GLOBAL_THEME_COLOR = "dark"
+MERMAID_THEME = "dark"
+
 st.title("🤖 Dumblexity - AI Assistant")
 
-async def get_final_url_httpx(initial_url, client):
-    try:
-        # GET 요청을 보내고 리디렉션을 자동으로 따릅니다.
-        response = await client.get(initial_url, headers={'User-Agent': 'Mozilla/5.0'}, follow_redirects=True, timeout=10.0)
-        # 최종 URL 반환
-        return str(response.url)
-    except Exception as e:
-        # 오류 발생 시 원본 URL 반환
-        return initial_url
-
-# [NEW] 비동기 URL을 가져오는 로직을 래핑할 별도의 async 함수
-async def resolve_all_urls_async(urls_to_fetch):
-    async with httpx.AsyncClient() as client:
-        tasks = [get_final_url_httpx(uri, client) for uri in urls_to_fetch]
-        # [NOTE] gather는 작업 목록을 받아 동시에 실행합니다.
-        resolved_urls = await asyncio.gather(*tasks)
-        return resolved_urls
-
-def genai_stream_wrapper(response_stream, grounding_chunks_list):
-    for chunk in response_stream:
-        if chunk.candidates:
-            for cand in chunk.candidates:
-                if cand.grounding_metadata and cand.grounding_metadata.grounding_chunks:
-                    grounding_chunks_list.extend(cand.grounding_metadata.grounding_chunks)
-        if chunk.text:
-            yield chunk.text
-
-def get_all_sessions():
-    files = glob.glob(os.path.join(SESSION_DIR, "*.json"))
-    return [os.path.splitext(os.path.basename(f))[0] for f in files]
-
-# [CHANGED] 'silent' 매개변수 추가 (자동 저장 시 알림을 띄우지 않기 위함)
-def save_session(session_name, silent=False):
-    if not session_name:
-        if not silent:
-            st.sidebar.error("Session name cannot be empty.")
-        return
-    safe_name = "".join([c for c in session_name if c.isalnum() or c in (' ', '-', '_')]).strip()
-    
-    # [NEW] 안전한 이름이 비어있는 경우 (예: 특수문자로만 입력)
-    if not safe_name:
-        if not silent:
-            st.sidebar.error("Valid session name is required.")
-        return
-
-    file_path = os.path.join(SESSION_DIR, f"{safe_name}.json")
-    try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(st.session_state.messages, f, ensure_ascii=False, indent=2)
-        
-        # [NEW] 현재 세션 이름 업데이트
-        st.session_state.current_session_name = safe_name
-        
-        if not silent:
-            st.sidebar.success(f"Session '{safe_name}' saved!")
-    except Exception as e:
-        if not silent:
-            st.sidebar.error(f"Failed to save session: {e}")
-
-def load_session(session_name):
-    file_path = os.path.join(SESSION_DIR, f"{session_name}.json")
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            st.session_state.messages = json.load(f)
-        
-        # [NEW] 현재 세션 이름 업데이트
-        st.session_state.current_session_name = session_name
-        st.rerun()
-    except Exception as e:
-        st.sidebar.error(f"Failed to load session: {e}")
-
-def delete_session(session_name):
-    file_path = os.path.join(SESSION_DIR, f"{session_name}.json")
-    try:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            
-            # [NEW] 만약 현재 세션을 삭제했다면, current_session_name 초기화
-            if st.session_state.current_session_name == session_name:
-                st.session_state.current_session_name = None
-                
-            st.sidebar.success(f"Session '{session_name}' deleted!")
-            st.rerun()
-    except Exception as e:
-        st.sidebar.error(f"Failed to delete session: {e}")
 
 # --- Session State Initialization ---
 if "genai_client" not in st.session_state:
-    st.session_state.genai_client = genai.Client()
+    st.session_state.genai_client = get_genai_client()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -113,29 +42,42 @@ if "messages" not in st.session_state:
 if "current_session_name" not in st.session_state:
     st.session_state.current_session_name = None
 
-# --- Configuration ---
-grounding_tool = types.Tool(
-    google_search=types.GoogleSearch()
-)
-generate_config = types.GenerateContentConfig(
-    tools=[grounding_tool],
-    system_instruction="You are an AI assistant. You MUST use the Google Search tool for any query that requires up-to-date information or external facts. Always provide citations when you use search results.",
-    max_output_tokens=65536,
-    temperature=0.2,
-    thinking_config=types.ThinkingConfig(thinking_budget=-1)
-)
-
 # --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Configuration")
     
     selected_model = st.selectbox(
         "Choose Model:",
-        ["gemini-2.5-flash", "gemini-2.5-pro"],
+        available_models,
         index=0,
         help="Flash is faster and cheaper, Pro is more capable for complex tasks."
     )
+
+# [CHANGED] 상호 배타적인 검색 모드 선택
+    st.markdown("##### 🔍 Search Mode")
+    search_mode = st.radio(
+        "Select search mode:",
+        ["Standard Search", "Extraction"],
+        index=0,
+        label_visibility="collapsed" # "Select search mode:" 레이블 숨기기
+    )
+
+    # [NEW] 상태 변수 초기화
+    use_web_search = False
+    use_map_search = False
+    use_extraction = False
+
+    # [NEW] 선택된 모드에 따라 UI 분기
+    if search_mode == "Standard Search":
+        # 'Standard Search'일 때만 검색 옵션 표시
+        use_web_search = st.checkbox("웹 검색 (Web Search)", value=True)
+        use_map_search = st.checkbox("지도 검색 (Map Search)", value=True)
     
+    elif search_mode == "Extraction":
+        # 'Extraction' 모드임을 알림 (선택 사항)
+        st.info("Extraction mode is active. Web/Map search is disabled.")
+        use_extraction = True # 추출 모드 플래그 설정
+
     st.divider()
     
     st.header("🗂️ Session Management")
@@ -207,7 +149,7 @@ if prompt := st.chat_input("Ask me anything..."):
     for msg in st.session_state.messages:
         role = "user" if msg["role"] == "user" else "model"
         sdk_history.append(
-            types.Content(role=role, parts=[types.Part(text=msg["content"])])
+            gen_sdk_history(role, msg["content"])
         )
     
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -220,27 +162,44 @@ if prompt := st.chat_input("Ask me anything..."):
         with st.spinner("🤖 Thinking..."):
             try:
                 total_grounding_chunks = []
+                total_function_calls = []
                 
+                config_payload = generate_config(
+                    web_search=use_web_search, 
+                    map_search=use_map_search,
+                    extraction=use_extraction
+                )
+
                 chat_session = st.session_state.genai_client.chats.create(
                     model=selected_model,
-                    config=generate_config,
+                    config=config_payload,
                     history=sdk_history
                 )
                 
                 response_stream = chat_session.send_message_stream(prompt)
-                full_response_text = st.write_stream(genai_stream_wrapper(response_stream, total_grounding_chunks))
+                full_response_text = st.write_stream(genai_stream_wrapper(response_stream, total_grounding_chunks, total_function_calls))
+                # Not yet used for extract_web_page and extract_youtube_transcript as they are called automatically within the model response
+                if total_function_calls:
+                    st.info("🔧 Calling functions...")
+                    function_results = get_function_call_results(total_function_calls)
+                    response_stream2 = chat_session.send_message_stream(function_results)
+                    total_function_calls.clear()
+                    full_response_text += st.write_stream(genai_stream_wrapper(response_stream2, total_grounding_chunks, total_function_calls))
                 citation_text = ""
-                with st.spinner("🔍 Verifying citations..."):
-                    if total_grounding_chunks:
-                        unique_chunks = {}
+                if total_grounding_chunks:
+                    with st.spinner("🔍 Verifying citations..."):
+                        unique_web_chunks = {}
+                        unique_map_chunks = {}
                         for chunk in total_grounding_chunks:
                             if chunk.web and chunk.web.uri:
-                                unique_chunks[chunk.web.uri] = chunk.web.title or "Untitled"
+                                unique_web_chunks[chunk.web.uri] = chunk.web.title or "Untitled"
+                            if chunk.maps and chunk.maps.uri:
+                                unique_map_chunks[chunk.maps.uri] = chunk.maps.title or "Untitled"
 
-                        if unique_chunks:
-                            citation_text += "\n\n#### Citations\n"
+                        if unique_web_chunks:
+                            web_citation_text = "\n\n#### Web Citations\n"
                             
-                            urls_to_fetch = list(unique_chunks.keys())
+                            urls_to_fetch = list(unique_web_chunks.keys())
                             
                            # --- [FIX START] ---
                             # [CHANGED] asyncio.run()을 사용하여 비동기 함수를 동기식으로 호출
@@ -250,17 +209,34 @@ if prompt := st.chat_input("Ask me anything..."):
 
                             # [NEW] 병렬로 받아온 결과를 사용하여 Citatation 텍스트 구성
                             for i, initial_uri in enumerate(urls_to_fetch):
-                                title = unique_chunks[initial_uri]
+                                title = unique_web_chunks[initial_uri]
                                 resolved_uri = resolved_urls[i]
-                                citation_text += f"{i+1}. [{title}]({resolved_uri})\n"
+                                web_citation_text += f"{i+1}. [{title}]({resolved_uri})\n"
                             
-                            st.markdown(citation_text)
+                            st.markdown(web_citation_text)
+                            citation_text += web_citation_text
+                        if unique_map_chunks:
+                            map_citation_text = "\n\n#### Map Citations\n"
+                            for i, (uri, title) in enumerate(unique_map_chunks.items()):
+                                map_citation_text += f"{i+1}. [{title}]({uri})\n"
+                            
+                            st.markdown(map_citation_text)
+                            citation_text += map_citation_text
 
                 final_content = full_response_text + citation_text
+
+                regex_pattern = r"```mermaid\s*?(.*?)```"
+                mermaid_blocks = re.findall(regex_pattern, final_content, re.DOTALL)
+                if mermaid_blocks:
+                    st.markdown("#### Mermaid Diagrams")    
+                    for block in mermaid_blocks:
+                        st_markdown(f"```mermaid\n{block}\n```", mermaid_theme='dark', theme_color='dark', key=f"mermaid_{hash(block)}")
+
                 copy_button(final_content,
                             tooltip="Copy this text",
                             copied_label="Copied!",
                             icon="📋")
+                
                 st.session_state.messages.append({"role": "assistant", "content": final_content})
 
                 # --- [NEW] 자동 저장 트리거 ---

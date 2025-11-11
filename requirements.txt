@@ -3,3 +3,8 @@ google-genai==1.49.0
 httpx==0.28.1
 asyncio==4.0.0
 st-copy==1.1.2
+streamlit-geolocation==0.0.10
+tavily==1.1.0
+youtube-transcript-api==1.2.3
+pytube==15.0.0
+streamlit_markdown==1.1.0

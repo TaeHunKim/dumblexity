@@ -1,8 +1,9 @@
 # Dumblexity - simple version of pseudo-Perplexity using Gemini + Streamlit
 
 * Docker: https://hub.docker.com/repository/docker/rapaellk/dumblexity/general
+* Github: https://github.com/TaeHunKim/dumblexity
 
-* TODO: Inline citation, multimodal and other grounds (map, file, ...)
+* TODO: Inline citation, multimodal and other grounds (file, ...), print with mermaid more correctly, ...
 
 * How to install:
 
@@ -11,6 +12,7 @@ docker run -d \
   --name my-ai-assistant \
   -p 8501:8501 \
   -e GEMINI_API_KEY="여기에_실제_API_KEY를_입력하세요" \
+  -e TAVILY_API_KEY="여기에_실제_API_KEY를_입력하세요" \
   -v $(pwd)/sessions:/app/sessions \
   --restart unless-stopped \
   dumblexity
@@ -28,6 +30,7 @@ services:
       - "8501:8501"
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY} # .env 파일이나 시스템 환경변수에서 가져옴
+      - TAVILY_API_KEY=${TAVILY_API_KEY} # .env 파일이나 시스템 환경변수에서 가져옴
     volumes:
       - ./sessions:/app/sessions
     restart: unless-stopped
