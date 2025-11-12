@@ -3,7 +3,7 @@
 * Docker: https://hub.docker.com/repository/docker/rapaellk/dumblexity/general
 * Github: https://github.com/TaeHunKim/dumblexity
 
-* TODO: Inline citation, multimodal and other grounds (file, ...), print with mermaid more correctly, ...
+* TODO: Inline citation, multimodal and other grounds (file, ...)
 
 * How to install:
 
@@ -13,6 +13,7 @@ docker run -d \
   -p 8501:8501 \
   -e GEMINI_API_KEY="여기에_실제_API_KEY를_입력하세요" \
   -e TAVILY_API_KEY="여기에_실제_API_KEY를_입력하세요" \
+  -e YOUTUBE_DATA_API_KEY="여기에_실제_API_KEY를_입력하세요" \
   -v $(pwd)/sessions:/app/sessions \
   --restart unless-stopped \
   dumblexity
@@ -31,6 +32,7 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY} # .env 파일이나 시스템 환경변수에서 가져옴
       - TAVILY_API_KEY=${TAVILY_API_KEY} # .env 파일이나 시스템 환경변수에서 가져옴
+      - YOUTUBE_DATA_API_KEY=${YOUTUBE_DATA_API_KEY} # .env 파일이나 시스템 환경변수에서 가져옴
     volumes:
       - ./sessions:/app/sessions
     restart: unless-stopped

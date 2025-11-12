@@ -15,7 +15,6 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 
 # 소스 코드 복사
 COPY *.py .
-COPY README.md .
 
 # 세션 저장용 디렉토리 생성
 RUN mkdir -p /app/sessions

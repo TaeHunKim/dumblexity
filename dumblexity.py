@@ -2,8 +2,9 @@ import streamlit as st
 import traceback
 import asyncio
 from st_copy import copy_button
-from streamlit_markdown import st_markdown
+import streamlit_mermaid as stmd
 import re
+import json
 
 from utils import (
     resolve_all_urls_async,
@@ -57,26 +58,25 @@ with st.sidebar:
     st.markdown("##### 🔍 Search Mode")
     search_mode = st.radio(
         "Select search mode:",
-        ["Standard Search", "Extraction"],
+        ["Google Search", "External Search"],
         index=0,
         label_visibility="collapsed" # "Select search mode:" 레이블 숨기기
     )
 
     # [NEW] 상태 변수 초기화
-    use_web_search = False
-    use_map_search = False
+    use_google_web_search = False
+    use_google_map_search = False
+    use_tavily_search = False
     use_extraction = False
 
     # [NEW] 선택된 모드에 따라 UI 분기
-    if search_mode == "Standard Search":
-        # 'Standard Search'일 때만 검색 옵션 표시
-        use_web_search = st.checkbox("웹 검색 (Web Search)", value=True)
-        use_map_search = st.checkbox("지도 검색 (Map Search)", value=True)
+    if search_mode == "Google Search":
+        use_google_web_search = st.checkbox("웹 검색 (Web Search)", value=True)
+        use_google_map_search = st.checkbox("지도 검색 (Map Search)", value=True)
     
-    elif search_mode == "Extraction":
-        # 'Extraction' 모드임을 알림 (선택 사항)
-        st.info("Extraction mode is active. Web/Map search is disabled.")
-        use_extraction = True # 추출 모드 플래그 설정
+    elif search_mode == "External Search":
+        use_tavily_search = st.checkbox("웹 검색 (Tavily Search)", value=True)
+        use_extraction = st.checkbox("웹/YT 추출(extraction)", value=True)
 
     st.divider()
     
@@ -165,8 +165,9 @@ if prompt := st.chat_input("Ask me anything..."):
                 total_function_calls = []
                 
                 config_payload = generate_config(
-                    web_search=use_web_search, 
-                    map_search=use_map_search,
+                    google_web_search=use_google_web_search, 
+                    google_map_search=use_google_map_search,
+                    tavily_search=use_tavily_search,
                     extraction=use_extraction
                 )
 
@@ -178,13 +179,16 @@ if prompt := st.chat_input("Ask me anything..."):
                 
                 response_stream = chat_session.send_message_stream(prompt)
                 full_response_text = st.write_stream(genai_stream_wrapper(response_stream, total_grounding_chunks, total_function_calls))
+
                 # Not yet used for extract_web_page and extract_youtube_transcript as they are called automatically within the model response
-                if total_function_calls:
-                    st.info("🔧 Calling functions...")
-                    function_results = get_function_call_results(total_function_calls)
-                    response_stream2 = chat_session.send_message_stream(function_results)
-                    total_function_calls.clear()
-                    full_response_text += st.write_stream(genai_stream_wrapper(response_stream2, total_grounding_chunks, total_function_calls))
+
+                #if total_function_calls:
+                #    st.info("🔧 Calling functions...")
+                #    function_results = get_function_call_results(total_function_calls)
+                #    response_stream2 = chat_session.send_message_stream(function_results)
+                #    total_function_calls.clear()
+                #    full_response_text += st.write_stream(genai_stream_wrapper(response_stream2, total_grounding_chunks, total_function_calls))
+
                 citation_text = ""
                 if total_grounding_chunks:
                     with st.spinner("🔍 Verifying citations..."):
@@ -223,6 +227,44 @@ if prompt := st.chat_input("Ask me anything..."):
                             st.markdown(map_citation_text)
                             citation_text += map_citation_text
 
+                if total_function_calls:
+                    with st.spinner("🔍 Verifying citations from function calls..."):
+                        unique_web_chunks = {}
+                        for func_call in total_function_calls:
+                            parts = func_call.parts
+                            if parts:
+                                for part in parts:
+                                    func_response = part.function_response
+                                    if func_response:
+                                        #print(f"Function response: {func_response}")
+                                        response = func_response.response
+                                        output = response.get("result", response) if response else None
+                                        if isinstance(output, str):
+                                            try:
+                                                output = json.loads(output)
+                                            except json.JSONDecodeError:
+                                                pass
+                                        if output and 'results' in output:
+                                            for res in output['results']:
+                                                uri = res.get("url")
+                                                title = res.get("title", "Untitled")
+                                                if uri:
+                                                    unique_web_chunks[uri] = title
+                                        elif output and isinstance(output, list) and 'url' in output[0]:
+                                            for res in output:
+                                                uri = res.get("url")
+                                                title = res.get('title', uri)  # Use last part of URL as title if not provided
+                                                if uri:
+                                                    unique_web_chunks[uri] = title
+                        if unique_web_chunks:
+                            func_citation_text = "\n\n#### Function Call Citations\n"
+
+                            for i, (uri, title) in enumerate(unique_web_chunks.items()):
+                                func_citation_text += f"{i+1}. [{title}]({uri})\n"
+                            
+                            st.markdown(func_citation_text)
+                            citation_text += func_citation_text
+
                 final_content = full_response_text + citation_text
 
                 regex_pattern = r"```mermaid\s*?(.*?)```"
@@ -230,7 +272,7 @@ if prompt := st.chat_input("Ask me anything..."):
                 if mermaid_blocks:
                     st.markdown("#### Mermaid Diagrams")    
                     for block in mermaid_blocks:
-                        st_markdown(f"```mermaid\n{block}\n```", mermaid_theme='dark', theme_color='dark', key=f"mermaid_{hash(block)}")
+                        stmd.st_mermaid(block)
 
                 copy_button(final_content,
                             tooltip="Copy this text",
