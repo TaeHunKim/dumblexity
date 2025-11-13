@@ -3,8 +3,6 @@
 * Docker: https://hub.docker.com/repository/docker/rapaellk/dumblexity/general
 * Github: https://github.com/TaeHunKim/dumblexity
 
-* TODO: Inline citation, multimodal and other grounds (file, ...)
-
 * How to install:
 
 ```bash

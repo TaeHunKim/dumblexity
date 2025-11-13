@@ -20,7 +20,8 @@ from ai import (
     get_genai_client,
     gen_sdk_history,
     available_models,
-    get_function_call_results
+    get_function_call_results,
+    process_files
 )
 
 # --- Constants & Setup ---
@@ -45,6 +46,20 @@ if "current_session_name" not in st.session_state:
 
 # --- Sidebar ---
 with st.sidebar:
+    # [NEW] 파일 업로드 섹션 추가 (설정 위에 배치하여 접근성 높임)
+    st.header("📂 Uploads")
+    uploaded_files = st.file_uploader(
+        "Attach files to context:", 
+        accept_multiple_files=True,
+        help="Upload text/code files. Content will be appended to your prompt."
+    )
+    
+    # 업로드된 파일이 있으면 간단히 표시
+    if uploaded_files:
+        st.caption(f"📎 {len(uploaded_files)} file(s) attached")
+    
+    st.divider()
+
     st.header("⚙️ Configuration")
     
     selected_model = st.selectbox(
@@ -54,7 +69,17 @@ with st.sidebar:
         help="Flash is faster and cheaper, Pro is more capable for complex tasks."
     )
 
-# [CHANGED] 상호 배타적인 검색 모드 선택
+    temperature = st.slider(
+        "Temperature:",
+        min_value=0.0,
+        max_value=2.0,
+        value=0.2,
+        step=0.1,
+        help="Controls randomness: 0.0 is deterministic, higher values are more creative."
+    )
+
+
+    # [CHANGED] 상호 배타적인 검색 모드 선택
     st.markdown("##### 🔍 Search Mode")
     search_mode = st.radio(
         "Select search mode:",
@@ -66,13 +91,16 @@ with st.sidebar:
     # [NEW] 상태 변수 초기화
     use_google_web_search = False
     use_google_map_search = False
+    use_google_code_execution = False
     use_tavily_search = False
     use_extraction = False
 
     # [NEW] 선택된 모드에 따라 UI 분기
     if search_mode == "Google Search":
         use_google_web_search = st.checkbox("웹 검색 (Web Search)", value=True)
-        use_google_map_search = st.checkbox("지도 검색 (Map Search)", value=True)
+        use_google_map_search = st.checkbox("지도 검색 (Map Search)", value=False)
+        use_google_code_execution = st.checkbox("코드 실행 (Code Execution)", value=False)
+        st.markdown("**Note:** Map Search and Code Execution cannot be executed together in a single query.")
     
     elif search_mode == "External Search":
         use_tavily_search = st.checkbox("웹 검색 (Tavily Search)", value=True)
@@ -142,18 +170,24 @@ for message in st.session_state.messages:
 
 # --- Chat Input & Response Handling ---
 if prompt := st.chat_input("Ask me anything..."):
-    with st.chat_message("user"):
-        st.markdown(prompt)
     
+    # [NEW] 파일 처리 로직: 업로드된 파일이 있다면 내용을 읽어서 프롬프트에 추가
+    full_prompt_content = prompt
+    
+    # UI에 표시 (사용자가 입력한 그대로 + 파일 정보가 있다면 포함)
+    with st.chat_message("user"):
+        st.markdown(full_prompt_content)
+
+    # History 생성
     sdk_history = []
     for msg in st.session_state.messages:
         role = "user" if msg["role"] == "user" else "model"
         sdk_history.append(
             gen_sdk_history(role, msg["content"])
         )
-    
-    st.session_state.messages.append({"role": "user", "content": prompt})
 
+    st.session_state.messages.append({"role": "user", "content": full_prompt_content})
+    
     # [NEW] 사용자 메시지가 추가된 직후에도 자동 저장 (선택 사항이지만, 응답 전 앱이 멈출 경우 대비)
     if st.session_state.current_session_name:
         save_session(st.session_state.current_session_name, silent=True)
@@ -167,17 +201,22 @@ if prompt := st.chat_input("Ask me anything..."):
                 config_payload = generate_config(
                     google_web_search=use_google_web_search, 
                     google_map_search=use_google_map_search,
+                    google_code_execution=use_google_code_execution,
                     tavily_search=use_tavily_search,
-                    extraction=use_extraction
+                    extraction=use_extraction,
+                    temperature=temperature
                 )
+
+                if uploaded_files:
+                    file_contents = process_files(uploaded_files)
 
                 chat_session = st.session_state.genai_client.chats.create(
                     model=selected_model,
                     config=config_payload,
                     history=sdk_history
                 )
-                
-                response_stream = chat_session.send_message_stream(prompt)
+
+                response_stream = chat_session.send_message_stream([full_prompt_content] + (file_contents if uploaded_files else []))
                 full_response_text = st.write_stream(genai_stream_wrapper(response_stream, total_grounding_chunks, total_function_calls))
 
                 # Not yet used for extract_web_page and extract_youtube_transcript as they are called automatically within the model response
@@ -205,7 +244,7 @@ if prompt := st.chat_input("Ask me anything..."):
                             
                             urls_to_fetch = list(unique_web_chunks.keys())
                             
-                           # --- [FIX START] ---
+                            # --- [FIX START] ---
                             # [CHANGED] asyncio.run()을 사용하여 비동기 함수를 동기식으로 호출
                             # 이것이 동기(Streamlit) 코드와 비동기(httpx) 코드를 연결하는 다리입니다.
                             resolved_urls = asyncio.run(resolve_all_urls_async(urls_to_fetch))

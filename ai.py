@@ -9,6 +9,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 #from pytube import YouTube
 import os
+from functools import lru_cache
+import tempfile
 
 available_models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-2.5-flash-preview-09-2025", "gemini-2.5-flash-lite-preview-09-2025",  "gemini-2.0-flash"]
 
@@ -144,7 +146,7 @@ def extract_youtube_transcript(video_url: str) -> str:
     content = "\n".join([x.text for x in fetched_transcript.snippets])
     return [{'url': video_url, 'title': title, 'description': description, 'content': content}]
 
-def generate_config(google_web_search, google_map_search, tavily_search, extraction):
+def generate_config(google_web_search, google_map_search, google_code_execution, tavily_search, extraction, temperature=0.2):
     tools = []
     tool_config = None
 
@@ -183,32 +185,49 @@ def generate_config(google_web_search, google_map_search, tavily_search, extract
             )
             tool_config = map_grounding_tool_config
 
+    if google_code_execution:
+        code_execution_tool = types.Tool(
+            code_execution=types.ToolCodeExecution()
+        )
+        tools.append(code_execution_tool)
+
     config = types.GenerateContentConfig(
         tools=tools,
         tool_config=tool_config,
         system_instruction="""
-        You are an AI assistant. You can use provided tools for any query that requires up-to-date information or external facts.
-        * While answering, you can use mermaid diagrams for better explanations when needed, wrapped by ```mermaid\n{diagram}\n```.
+        You are an AI assistant. You can use provided tools if you feel the necessity, but no need to use it always.
+        * Only when asked, you can use mermaid diagrams for better explanations when needed, wrapped by ```mermaid\n{diagram}\n```.
             * If adding diagrams, do not forget to wrap text in each box with double quotes. e.g., A["This is a box"]
         * If you search the web and user's question includes relative time references like "recently" or "now", do not fix the search query with the date you know.
         """,
         max_output_tokens=65536,
-        temperature=0.2,
+        temperature=temperature,
         thinking_config=types.ThinkingConfig(thinking_budget=-1)
     )
     return config
 
+@lru_cache(maxsize=1)
 def get_genai_client():
     return genai.Client()
 
 def genai_stream_wrapper(response_stream, grounding_chunks_list, function_calls_list):
     for chunk in response_stream:
+        if chunk.automatic_function_calling_history:
+            function_calls_list.extend(chunk.automatic_function_calling_history)
         if chunk.candidates:
             for cand in chunk.candidates:
                 if cand.grounding_metadata and cand.grounding_metadata.grounding_chunks:
                     grounding_chunks_list.extend(cand.grounding_metadata.grounding_chunks)
-        if chunk.automatic_function_calling_history:
-            function_calls_list.extend(chunk.automatic_function_calling_history)
+                if cand.content and cand.content.parts:
+                    for part in cand.content.parts:
+                        if part.executable_code:
+                            str = f"\n#### Executable Code Snippet\n```{'python' if part.executable_code.language == types.Language.PYTHON else ''}\n{part.executable_code.code}\n```\n"
+                            yield str
+                            if part.code_execution_result and part.code_execution_result.output:
+                                str = f"\n#### Code Execution Result\n```\n{part.code_execution_result.output}\n```"
+                                yield str
+                        #elif part.text:
+                            #yield part.text
         if chunk.text:
             yield chunk.text
 
@@ -227,3 +246,24 @@ def get_function_call_results(function_calls):
                 types.Part.from_function_response(name=func_call.name, response={"contents":result})
             )
     return results
+
+def process_files(uploaded_files):
+    file_contents = []
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            if uploaded_file.size > 2 * 1024 * 1024:
+                with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    temp_file_path = tmp_file.name
+                    content = get_genai_client().files.upload(file=temp_file_path, config=dict(mime_type=uploaded_file.type))
+                    file_contents.append(content)
+                    if os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
+            else:
+                content = types.Part.from_bytes(
+                    data=uploaded_file.getvalue(),
+                    mime_type=uploaded_file.type,
+                )
+                file_contents.append(content)
+    print(f"Processed {len(file_contents)} files.")
+    return file_contents

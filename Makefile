@@ -6,7 +6,7 @@ DOCKER_USER ?= rapaellk
 # 이미지 이름
 IMAGE_NAME ?= dumblexity
 # 버전 태그 (릴리스할 때마다 변경)
-VERSION ?= 0.0.9
+VERSION ?= 0.1.0
 
 # 전체 이미지 이름 조합 (예: rapaellk/dumblexity)
 FULL_IMAGE_NAME := $(DOCKER_USER)/$(IMAGE_NAME)
