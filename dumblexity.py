@@ -195,8 +195,9 @@ if prompt := st.chat_input("Ask me anything..."):
     with st.chat_message("assistant"):
         with st.spinner("🤖 Thinking..."):
             try:
-                total_grounding_chunks = []
+                total_grounding_metadata = []
                 total_function_calls = []
+                total_citation_metadata = []
                 
                 config_payload = generate_config(
                     google_web_search=use_google_web_search, 
@@ -217,7 +218,7 @@ if prompt := st.chat_input("Ask me anything..."):
                 )
 
                 response_stream = chat_session.send_message_stream([full_prompt_content] + (file_contents if uploaded_files else []))
-                full_response_text = st.write_stream(genai_stream_wrapper(response_stream, total_grounding_chunks, total_function_calls))
+                full_response_text = st.write_stream(genai_stream_wrapper(response_stream, total_grounding_metadata, total_citation_metadata, total_function_calls))
 
                 # Not yet used for extract_web_page and extract_youtube_transcript as they are called automatically within the model response
 
@@ -229,20 +230,58 @@ if prompt := st.chat_input("Ask me anything..."):
                 #    full_response_text += st.write_stream(genai_stream_wrapper(response_stream2, total_grounding_chunks, total_function_calls))
 
                 citation_text = ""
-                if total_grounding_chunks:
-                    with st.spinner("🔍 Verifying citations..."):
-                        unique_web_chunks = {}
-                        unique_map_chunks = {}
-                        for chunk in total_grounding_chunks:
-                            if chunk.web and chunk.web.uri:
-                                unique_web_chunks[chunk.web.uri] = chunk.web.title or "Untitled"
-                            if chunk.maps and chunk.maps.uri:
-                                unique_map_chunks[chunk.maps.uri] = chunk.maps.title or "Untitled"
+                with st.spinner("🔍 Verifying citations..."):
+                    unique_citation_chunks = {}
+                    if total_citation_metadata:
+                        for citation in total_citation_metadata:
+                            uri = citation.uri
+                            title = citation.title or "Untitled"
+                            if uri:
+                                unique_citation_chunks[uri] = title
+                    
+                    if unique_citation_chunks:
+                        citation_text += "\n\n#### Citations\n"
+                        urls_to_fetch = list(unique_citation_chunks.keys())
+                        resolved_urls = asyncio.run(resolve_all_urls_async(urls_to_fetch))
 
-                        if unique_web_chunks:
+                        for i, initial_uri in enumerate(urls_to_fetch):
+                            title = unique_citation_chunks[initial_uri]
+                            resolved_uri = resolved_urls[i]
+                            web_citation_text += f"{i+1}. [{title}]({resolved_uri})\n"
+                        
+                        st.markdown(citation_text)
+                            
+                    if total_grounding_metadata:
+                        unique_used_web_chunks = {}
+                        unique_used_map_chunks = {}
+                        unique_unused_web_chunks = {}
+                        unique_unused_map_chunks = {}
+                        for metadata in total_grounding_metadata:
+                            chunks = metadata.grounding_chunks or []
+                            supports = metadata.grounding_supports or []
+                            #print(chunks)
+                            #print(supports)
+                            #print('------------------')
+                            used_chunk_indices = []
+                            for support in supports:
+                                used_chunk_indices.extend(support.grounding_chunk_indices)
+                            used_chunk_indices_set = set(used_chunk_indices)
+                            for i, chunk in enumerate(chunks):
+                                if chunk.web and chunk.web.uri:
+                                    if i in used_chunk_indices_set:
+                                        unique_used_web_chunks[chunk.web.uri] = chunk.web.title or "Untitled"
+                                    else:
+                                        unique_unused_web_chunks[chunk.web.uri] = chunk.web.title or "Untitled"
+                                if chunk.maps and chunk.maps.uri:
+                                    if i in used_chunk_indices_set:
+                                        unique_used_map_chunks[chunk.maps.uri] = chunk.maps.title or "Untitled"
+                                    else:
+                                        unique_unused_map_chunks[chunk.maps.uri] = chunk.maps.title or "Untitled"
+
+                        if unique_used_web_chunks:
                             web_citation_text = "\n\n#### Web Citations\n"
                             
-                            urls_to_fetch = list(unique_web_chunks.keys())
+                            urls_to_fetch = list(unique_used_web_chunks.keys())
                             
                             # --- [FIX START] ---
                             # [CHANGED] asyncio.run()을 사용하여 비동기 함수를 동기식으로 호출
@@ -252,15 +291,36 @@ if prompt := st.chat_input("Ask me anything..."):
 
                             # [NEW] 병렬로 받아온 결과를 사용하여 Citatation 텍스트 구성
                             for i, initial_uri in enumerate(urls_to_fetch):
-                                title = unique_web_chunks[initial_uri]
+                                title = unique_used_web_chunks[initial_uri]
                                 resolved_uri = resolved_urls[i]
                                 web_citation_text += f"{i+1}. [{title}]({resolved_uri})\n"
                             
                             st.markdown(web_citation_text)
                             citation_text += web_citation_text
-                        if unique_map_chunks:
+                        if unique_unused_web_chunks:
+                            web_citation_text = "\n\n#### Web Citations (not used)\n"
+                            
+                            urls_to_fetch = list(unique_unused_web_chunks.keys())
+
+                            resolved_urls = asyncio.run(resolve_all_urls_async(urls_to_fetch))
+
+                            for i, initial_uri in enumerate(urls_to_fetch):
+                                title = unique_unused_web_chunks[initial_uri]
+                                resolved_uri = resolved_urls[i]
+                                web_citation_text += f"{i+1}. [{title}]({resolved_uri})\n"
+                            
+                            st.markdown(web_citation_text)
+                            citation_text += web_citation_text
+                        if unique_used_map_chunks:
                             map_citation_text = "\n\n#### Map Citations\n"
-                            for i, (uri, title) in enumerate(unique_map_chunks.items()):
+                            for i, (uri, title) in enumerate(unique_used_map_chunks.items()):
+                                map_citation_text += f"{i+1}. [{title}]({uri})\n"
+                            
+                            st.markdown(map_citation_text)
+                            citation_text += map_citation_text
+                        if unique_unused_map_chunks:
+                            map_citation_text = "\n\n#### Map Citations (not used)\n"
+                            for i, (uri, title) in enumerate(unique_unused_map_chunks.items()):
                                 map_citation_text += f"{i+1}. [{title}]({uri})\n"
                             
                             st.markdown(map_citation_text)

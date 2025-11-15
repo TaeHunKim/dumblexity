@@ -210,14 +210,16 @@ def generate_config(google_web_search, google_map_search, google_code_execution,
 def get_genai_client():
     return genai.Client()
 
-def genai_stream_wrapper(response_stream, grounding_chunks_list, function_calls_list):
+def genai_stream_wrapper(response_stream, grounding_metadata, total_citation_metadata, function_calls_list):
     for chunk in response_stream:
         if chunk.automatic_function_calling_history:
             function_calls_list.extend(chunk.automatic_function_calling_history)
         if chunk.candidates:
             for cand in chunk.candidates:
-                if cand.grounding_metadata and cand.grounding_metadata.grounding_chunks:
-                    grounding_chunks_list.extend(cand.grounding_metadata.grounding_chunks)
+                if cand.citation_metadata:
+                    total_citation_metadata.extend(cand.citation_metadata)
+                if cand.grounding_metadata:
+                    grounding_metadata.append(cand.grounding_metadata)
                 if cand.content and cand.content.parts:
                     for part in cand.content.parts:
                         if part.executable_code:
